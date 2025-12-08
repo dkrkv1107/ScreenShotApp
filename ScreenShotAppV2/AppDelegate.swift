@@ -1,11 +1,13 @@
 import Cocoa
 import SwiftUI
-import CoreGraphics
 import ScreenCaptureKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var popover = NSPopover()
+    var contentViewController: ScreenshotContentController?
+    
+    private let shutterSound = NSSound(named: "Purr")
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.prohibited)
@@ -13,18 +15,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func setupStatusBar() {
-        // Menu bar icon
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem?.button?.image = NSImage(systemSymbolName: "photo.on.rectangle", accessibilityDescription: "Screenshot")
         statusItem?.button?.action = #selector(togglePopover)
         
-        // Popover with screenshot buttons
         popover.behavior = .transient
         popover.animates = true
-        let contentView = ContentView { [weak self] in
-            Task { await self?.takeScreenshot() }
-        }
-        popover.contentViewController = NSHostingController(rootView: contentView)
+        
+        contentViewController = ScreenshotContentController(appDelegate: self)
+        popover.contentViewController = contentViewController
     }
     
     @objc private func togglePopover() {
@@ -33,83 +32,185 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             if let button = statusItem?.button {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                popover.contentViewController?.view.window?.makeKey()
             }
         }
     }
     
-    @MainActor
-    private func takeScreenshot() async {
-        do {
-            // Fetch shareable content to get available displays
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let display = content.displays.first else {
-                print("No displays available for capture.")
-                return
-            }
+    func takeFullScreenshot() {
+        popover.performClose(nil)
 
-            // Create a filter to capture only the selected display
-            let filter = SCContentFilter(display: display, excludingWindows: [])
+        // Run system screenshot tool: full screen to clipboard, with sound
+        let task = Process()
+        task.launchPath = "/usr/sbin/screencapture"
+        task.arguments = ["-c"]    // full screen, to clipboard, plays system sound
 
-            // Configure a low-latency, single-frame stream
-            let config = SCStreamConfiguration()
-            config.capturesAudio = false
-            config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-            config.queueDepth = 1
-            config.width = display.width
-            config.height = display.height
+        task.terminationHandler = { [weak self] process in
+            guard let self = self else { return }
 
-            // Set up a stream that we can pull a single frame from
-            let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-
-            // A helper class to receive frames
-            final class FrameReceiver: NSObject, SCStreamOutput {
-                var image: CGImage?
-                let semaphore = DispatchSemaphore(value: 0)
-                private let ciContext = CIContext()
-
-                func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-                    guard outputType == .screen else { return }
-                    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-                    let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-                    if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
-                        image = cgImage
-                        semaphore.signal()
-                    }
+            // Only show feedback if successful
+            if process.terminationStatus == 0 {
+                DispatchQueue.main.async {
+                    self.contentViewController?.setFeedback("✓ Screenshot copied!", isError: false)
+                    self.showPopoverWithFeedback()
                 }
             }
+        }
 
-            let receiver = FrameReceiver()
-            let outputQueue = DispatchQueue(label: "screen.capture.output")
-            try stream.addStreamOutput(receiver, type: .screen, sampleHandlerQueue: outputQueue)
-            try await stream.startCapture()
+        do {
+            try task.run()
+        } catch {
+            DispatchQueue.main.async {
+                self.contentViewController?.setFeedback("✗ Capture failed!", isError: true)
+                self.showPopoverWithFeedback()
+            }
+        }
+    }
 
-            // Wait briefly for the first frame
-            _ = receiver.semaphore.wait(timeout: .now() + 1.0)
-
-            // Stop capture as soon as we have a frame (or timed out)
-            stream.stopCapture { _ in }
-
-            guard let cgImage = receiver.image else {
-                print("Failed to capture screen frame.")
+    
+    private func captureScreenWithScreenCaptureKit() async {
+        do {
+            let available = try await SCShareableContent.current
+            guard let screen = available.displays.first else {
+                DispatchQueue.main.async {
+                    self.contentViewController?.setFeedback("✗ No screen found!", isError: true)
+                    self.showPopoverWithFeedback()
+                }
                 return
             }
-
-            // Convert to NSImage/PNG and copy to clipboard
-            let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-            let nsImage = NSImage(size: NSSize(width: bitmapRep.pixelsWide, height: bitmapRep.pixelsHigh))
-            nsImage.addRepresentation(bitmapRep)
-
-            guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
-                print("Failed to create PNG data from screenshot.")
-                return
-            }
-
+            
+            let contentFilter = SCContentFilter(display: screen, excludingApplications: [], exceptingWindows: [])
+            let streamConfig = SCStreamConfiguration()
+            streamConfig.width = Int(screen.width)
+            streamConfig.height = Int(screen.height)
+            streamConfig.showsCursor = false
+            
+            let cgImage = try await SCScreenshotManager.captureImage(contentFilter: contentFilter, configuration: streamConfig)
+            let nsImage = NSImage(cgImage: cgImage, size: NSZeroSize)
+            
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
-            pasteboard.setData(pngData, forType: .png)
-            print("Screenshot copied to clipboard!")
+            pasteboard.setData(nsImage.tiffRepresentation!, forType: .tiff)
+            
+            shutterSound?.play()
+            
+            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+            
+            DispatchQueue.main.async {
+                self.contentViewController?.setFeedback("✓ Screenshot copied!", isError: false)
+                self.showPopoverWithFeedback()
+            }
+            
+            print("Full screenshot copied to clipboard!")
         } catch {
-            print("Screen capture failed: \(error)")
+            DispatchQueue.main.async {
+                self.contentViewController?.setFeedback("✗ Capture failed!", isError: true)
+                self.showPopoverWithFeedback()
+            }
+            print("Failed to capture screenshot: \(error.localizedDescription)")
         }
+    }
+    
+    func takeSelectionScreenshot() {
+        // Hide popover
+        popover.performClose(nil)
+        
+        // Use system screencapture tool for interactive selection
+        let task = Process()
+        task.launchPath = "/usr/sbin/screencapture"
+        task.arguments = ["-i", "-c"]  // Interactive to clipboard
+        
+        // When the user finishes (or cancels), this gets called
+        task.terminationHandler = { [weak self] process in
+            guard let self = self else { return }
+            
+            // If user cancelled, exit status is usually non‑zero; skip feedback
+            if process.terminationStatus == 0 {
+                DispatchQueue.main.async {
+                    NSHapticFeedbackManager.defaultPerformer.perform(
+                        .generic,
+                        performanceTime: .now
+                    )
+                    self.contentViewController?.setFeedback("✓ Selection copied!", isError: false)
+                    self.showPopoverWithFeedback()
+                }
+            }
+        }
+        
+        do {
+            try task.run()
+        } catch {
+            DispatchQueue.main.async {
+                self.contentViewController?.setFeedback("✗ Capture failed!", isError: true)
+                self.showPopoverWithFeedback()
+            }
+        }
+    }
+
+    private func showPopoverWithFeedback() {
+        if let button = statusItem?.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        
+        // Auto-dismiss and reset after 2 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.popover.performClose(nil)
+            // Reset feedback state
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.contentViewController?.resetFeedback()
+            }
+        }
+    }
+    
+    func quitApp() {
+        NSApplication.shared.terminate(nil)
+    }
+}
+
+// Separate controller to manage state
+class ScreenshotContentController: NSViewController {
+    var appDelegate: AppDelegate?
+    var contentView: ContentView?
+    
+    init(appDelegate: AppDelegate) {
+        super.init(nibName: nil, bundle: nil)
+        self.appDelegate = appDelegate
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func loadView() {
+        contentView = ContentView(
+            takeScreenshot: { self.appDelegate?.takeFullScreenshot() },
+            takeSelection: { self.appDelegate?.takeSelectionScreenshot() },
+            quitApp: { self.appDelegate?.quitApp() },
+            feedbackMessage: "",
+            isError: false
+        )
+        view = NSHostingView(rootView: contentView!)
+    }
+    
+    func setFeedback(_ message: String, isError: Bool) {
+        contentView = ContentView(
+            takeScreenshot: { self.appDelegate?.takeFullScreenshot() },
+            takeSelection: { self.appDelegate?.takeSelectionScreenshot() },
+            quitApp: { self.appDelegate?.quitApp() },
+            feedbackMessage: message,
+            isError: isError
+        )
+        view = NSHostingView(rootView: contentView!)
+    }
+    
+    func resetFeedback() {
+        contentView = ContentView(
+            takeScreenshot: { self.appDelegate?.takeFullScreenshot() },
+            takeSelection: { self.appDelegate?.takeSelectionScreenshot() },
+            quitApp: { self.appDelegate?.quitApp() },
+            feedbackMessage: "",
+            isError: false
+        )
+        view = NSHostingView(rootView: contentView!)
     }
 }
