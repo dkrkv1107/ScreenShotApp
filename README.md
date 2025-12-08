@@ -2,10 +2,6 @@
 
 This repository contains a macOS SwiftUI Xcode project. The app is in the `ScreenShotAppV2` folder and can be opened and run in Xcode.
 
-## Repository
-
-Remote: https://github.com/dkrkv1107/ScreenShotApp
-
 ## Prerequisites
 
 - macOS with a recent version of Xcode (Xcode 14+ recommended).
@@ -40,81 +36,3 @@ Because this app interacts with screenshots / screen content, macOS may require 
 System Settings → Privacy & Security → Screen Recording
 
 You may need to quit and re-launch the app after granting permission.
-
-## Command-line build (optional)
-
-You can build from the command-line using `xcodebuild`, but it's easiest to use Xcode for development.
-
-Example (basic):
-
-```bash
-# From repo root
-xcodebuild -project ScreenShotAppV2.xcodeproj -scheme <SchemeName> -configuration Debug
-```
-
-Replace `<SchemeName>` with the actual scheme shown in Xcode.
-
-## Git workflow (recommended)
-
-- Create a feature branch for new work:
-
-```bash
-git checkout -b feature/your-feature
-```
-
-- Stage and commit changes:
-
-```bash
-git add .
-git commit -m "Describe your change"
-```
-
-- Push the branch and open a Pull Request on GitHub:
-
-```bash
-git push -u origin feature/your-feature
-```
-
-Then open the repository on GitHub and create a Pull Request.
-
-## .gitignore recommendation
-
-This project currently contains some user-specific Xcode files that should be ignored. Add a `.gitignore` with at least the following entries to avoid committing local user state and build artifacts:
-
-```
-# Xcode
-*.xcuserstate
-xcuserdata/
-DerivedData/
-*.xcworkspace/xcuserdata/
-
-# Swift Package Manager
-.build/
-
-# macOS
-*.DS_Store
-```
-
-If you want I can add a `.gitignore` file for you and commit it.
-
-## Contributing
-
-- Please open issues or submit Pull Requests.
-- Keep changes focused and include a short description in each PR.
-
-## Troubleshooting
-
-- If Xcode warns about missing signing identities, set a Development Team in the target Signing & Capabilities.
-- If the app can't capture the screen, verify System Settings → Privacy & Security → Screen Recording for the app.
-
-## License
-
-Add a license file if you want to make the project's license explicit (e.g., `LICENSE` with MIT/Apache/etc.).
-
----
-
-If you want any of the following, tell me and I will add them now:
-- Add and commit a `.gitignore` (recommended).
-- Switch remote to SSH URL `git@github.com:dkrkv1107/ScreenShotApp.git`.
-- Add a `LICENSE` file.
-# ScreenShotApp
