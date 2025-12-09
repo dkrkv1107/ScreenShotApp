@@ -15,7 +15,7 @@ Clone the repository and open the Xcode project:
 ```bash
 git clone https://github.com/dkrkv1107/ScreenShotApp.git
 cd ScreenShotAppV2
-# Open the project in Xcode
+# Open the project in Xcode latest version
 open ScreenShotAppV2.xcodeproj
 ```
 
