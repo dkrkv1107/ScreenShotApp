@@ -16,7 +16,7 @@ Clone the repository and open the Xcode project:
 git clone https://github.com/dkrkv1107/ScreenShotApp.git
 cd ScreenShotAppV2
 # Open the project in Xcode latest version
-open ScreenShotAppV2.xcodeproj
+open ScreenShotAppV2.xcodeproj in Xcode
 ```
 
 Note: There is an `.xcodeproj` inside the repository. If you see a workspace (`.xcworkspace`) and you're using CocoaPods or SwiftPM workspaces, open the workspace instead.
